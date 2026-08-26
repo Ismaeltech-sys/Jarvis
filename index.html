@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cerebro Digital — Visor Interactivo</title>
+
+<!-- Tailwind CSS (Play CDN, sin build step) -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] }
+      }
+    }
+  };
+</script>
+
+<!-- Tipografía -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- Vis.js Network (grafo interactivo) -->
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+
+<!-- Lucide Icons -->
+<script src="https://unpkg.com/lucide@latest"></script>
+
+<style>
+  html, body { overflow-x: hidden; }
+  body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+  #graph { background: radial-gradient(circle at 20% 20%, rgba(139,92,246,0.06), transparent 40%), #0a0a0a; }
+  .vis-tooltip {
+    background-color: #171717 !important;
+    border: 1px solid #262626 !important;
+    color: #e5e5e5 !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 12px !important;
+    padding: 8px 10px !important;
+    border-radius: 8px !important;
+    max-width: 280px;
+    white-space: normal !important;
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #262626; border-radius: 8px; }
+  .chip-active { box-shadow: 0 0 0 1px currentColor inset; }
+  @keyframes pulse-ring {
+    0% { box-shadow: 0 0 0 0 rgba(139,92,246,0.5); }
+    100% { box-shadow: 0 0 0 8px rgba(139,92,246,0); }
+  }
+  .ring-pulse { animation: pulse-ring 1.2s ease-out 2; }
+</style>
+</head>
+
+<body class="bg-neutral-950 text-neutral-200 antialiased min-h-screen">
+
+<!-- ===================== ERROR STATE ===================== -->
+<div id="error-state" class="fixed inset-0 z-40 hidden items-center justify-center bg-neutral-950 p-6">
+  <div class="max-w-lg w-full bg-neutral-900 border border-red-500/30 rounded-xl p-6">
+    <div class="flex items-center gap-2 text-red-400 mb-3">
+      <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+      <h2 class="font-semibold">Ocurrió un error al iniciar el visor</h2>
+    </div>
+    <p class="text-sm text-neutral-400" id="error-message">Error desconocido.</p>
+  </div>
+</div>
+
+<!-- ===================== APP ===================== -->
+<div id="app" class="hidden">
+
+  <!-- HEADER -->
+  <header class="sticky top-0 z-30 bg-neutral-950/90 backdrop-blur border-b border-neutral-800">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center gap-x-6 gap-y-2 justify-between">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-lg bg-violet-500/15 border border-violet-500/30 flex items-center justify-center">
+          <i data-lucide="brain-circuit" class="w-4 h-4 text-violet-400"></i>
+        </div>
+        <div>
+          <h1 class="text-sm font-semibold text-neutral-100 leading-none">Cerebro Digital</h1>
+          <p class="text-[11px] text-neutral-500 leading-none mt-0.5">Visor interactivo del vault</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-4 sm:gap-6 text-xs text-neutral-400">
+        <div class="flex items-center gap-1.5">
+          <i data-lucide="folder" class="w-3.5 h-3.5 text-neutral-600"></i>
+          <span><span id="stat-folders" class="text-neutral-200 font-medium">0</span> carpetas</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <i data-lucide="file-text" class="w-3.5 h-3.5 text-neutral-600"></i>
+          <span><span id="stat-mdfiles" class="text-neutral-200 font-medium">0</span> archivos .md</span>
+        </div>
+        <div class="hidden sm:flex items-center gap-1.5">
+          <i data-lucide="calendar" class="w-3.5 h-3.5 text-neutral-600"></i>
+          <span>snapshot <span id="stat-date" class="text-neutral-200 font-medium">—</span></span>
+        </div>
+      </div>
+
+      <button id="btn-open-onboarding" class="flex items-center gap-1.5 text-xs font-medium text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-lg px-3 py-1.5 transition-colors">
+        <i data-lucide="help-circle" class="w-3.5 h-3.5"></i>
+        ¿Cómo funciona esto?
+      </button>
+    </div>
+  </header>
+
+  <!-- AUDIT BANNER -->
+  <div id="audit-banner" class="max-w-7xl mx-auto px-4 sm:px-6 pt-4">
+    <div class="flex items-start gap-2.5 bg-amber-500/[0.06] border border-amber-500/20 rounded-lg px-4 py-2.5 text-xs text-amber-200/90">
+      <i data-lucide="sparkles" class="w-4 h-4 text-amber-400 shrink-0 mt-0.5"></i>
+      <p id="audit-note-text" class="leading-relaxed"></p>
+      <button id="btn-dismiss-audit" class="ml-auto text-amber-400/60 hover:text-amber-300 shrink-0" aria-label="Cerrar aviso">
+        <i data-lucide="x" class="w-3.5 h-3.5"></i>
+      </button>
+    </div>
+  </div>
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+
+    <!-- GRAPH -->
+    <section>
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-medium text-neutral-300 flex items-center gap-1.5">
+          <i data-lucide="git-branch" class="w-4 h-4 text-neutral-500"></i>
+          Grafo de conexiones
+        </h2>
+        <div id="legend" class="hidden sm:flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-neutral-500"></div>
+      </div>
+      <div class="border border-neutral-800 rounded-xl overflow-hidden">
+        <div id="graph" class="w-full h-[320px] sm:h-[440px]"></div>
+      </div>
+      <p class="text-[11px] text-neutral-600 mt-1.5">Arrastra los nodos para reordenar, usa la rueda del mouse (o pellizca) para hacer zoom, y haz clic en un nodo para ver el detalle de esa carpeta.</p>
+    </section>
+
+    <!-- TOOLBAR -->
+    <section class="flex flex-col sm:flex-row sm:items-center gap-3">
+      <div class="relative flex-1">
+        <i data-lucide="search" class="w-4 h-4 text-neutral-600 absolute left-3 top-1/2 -translate-y-1/2"></i>
+        <input id="search-input" type="text" placeholder="Buscar carpeta, descripción o archivo… (atajo: /)"
+          class="w-full bg-neutral-900 border border-neutral-800 focus:border-violet-500/50 focus:outline-none focus:ring-1 focus:ring-violet-500/30 rounded-lg pl-9 pr-9 py-2 text-sm text-neutral-200 placeholder:text-neutral-600 transition-colors" />
+        <button id="btn-clear-search" class="hidden absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-600 hover:text-neutral-300" aria-label="Limpiar búsqueda">
+          <i data-lucide="x" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+      <div id="category-filters" class="flex flex-wrap gap-1.5"></div>
+    </section>
+
+    <!-- GRID -->
+    <section>
+      <div id="grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+      <div id="no-results" class="hidden flex-col items-center justify-center gap-2 py-16 text-neutral-600">
+        <i data-lucide="search-x" class="w-8 h-8"></i>
+        <p class="text-sm">No hay carpetas que coincidan con tu búsqueda o filtros.</p>
+      </div>
+    </section>
+
+    <footer class="text-center text-[11px] text-neutral-700 pt-4 pb-8">
+      Snapshot generado el <span id="footer-date">—</span> a partir de datos embebidos en este archivo. Visor construido según <code class="text-neutral-600">SPEC.md</code>.
+    </footer>
+  </main>
+</div>
+
+<!-- ===================== DETAIL MODAL ===================== -->
+<div id="detail-modal" class="fixed inset-0 z-50 hidden items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/80" data-close="detail"></div>
+  <div class="relative bg-neutral-900 border border-neutral-800 rounded-xl max-w-lg w-full max-h-[85vh] overflow-y-auto shadow-2xl">
+    <div id="detail-content" class="p-6"></div>
+  </div>
+</div>
+
+<!-- ===================== ONBOARDING MODAL ===================== -->
+<div id="onboarding-modal" class="fixed inset-0 z-50 hidden items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/85" data-close="onboarding"></div>
+  <div class="relative bg-neutral-900 border border-neutral-800 rounded-2xl max-w-md w-full shadow-2xl overflow-hidden">
+    <div class="flex items-center justify-between px-6 pt-5">
+      <div class="flex items-center gap-1.5 text-[11px] font-medium text-violet-400 uppercase tracking-wide">
+        <i data-lucide="graduation-cap" class="w-3.5 h-3.5"></i>
+        Onboarding
+      </div>
+      <button id="btn-skip-onboarding" class="text-xs text-neutral-500 hover:text-neutral-300 transition-colors">Saltar</button>
+    </div>
+
+    <div class="px-6 pt-4 pb-2">
+      <h3 id="ob-title" class="text-lg font-semibold text-neutral-100 mb-2"></h3>
+      <p id="ob-description" class="text-sm text-neutral-400 leading-relaxed"></p>
+      <div id="ob-folders" class="flex flex-wrap gap-1.5 mt-3"></div>
+    </div>
+
+    <div class="flex items-center justify-between px-6 py-4 mt-2 border-t border-neutral-800">
+      <div id="ob-dots" class="flex items-center gap-1.5"></div>
+      <div class="flex items-center gap-2">
+        <button id="btn-ob-prev" class="text-xs font-medium text-neutral-400 hover:text-neutral-200 disabled:opacity-30 disabled:pointer-events-none flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-neutral-800 transition-colors">
+          <i data-lucide="chevron-left" class="w-3.5 h-3.5"></i> Atrás
+        </button>
+        <button id="btn-ob-next" class="text-xs font-medium text-white bg-violet-600 hover:bg-violet-500 flex items-center gap-1 px-3 py-1.5 rounded-lg transition-colors">
+          <span id="ob-next-label">Siguiente</span> <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Datos del vault embebidos directamente (sin fetch, funciona con doble clic / file://) -->
+<script>
+var VAULT_DATA = {
+  "stats": {
+    "generatedAt": "2026-08-17",
+    "totalFolders": 15,
+    "totalMdFilesInFolders": 35,
+    "totalRootFiles": 3,
+    "rootFiles": ["CLAUDE.md", "README.md", "SPEC.md"],
+    "emptySubfolders": 5,
+    "emptySubfoldersPaths": [
+      "01-CAPTURES/numbers",
+      "01-CAPTURES/observations",
+      "01-CAPTURES/patterns",
+      "01-CAPTURES/questions",
+      "01-CAPTURES/reactions"
+    ],
+    "foldersWithRealContent": 2,
+    "foldersOnlyTemplates": 13,
+    "auditNote": "El vault es un starter JARVIS recién inicializado: 13 de 15 carpetas solo contienen su README.md y/o plantillas vacías ('Reemplaza este bloque', '_ejemplo-proyecto_', '_colaborador-x_', 'YYYY-MM-DD'). El único contenido operativo real son las 3 skills en 05-CLAUDE/skills/ (start-project, process-inbox, extract-knowledge) y el catálogo de esas mismas skills en 08-SKILLS/INVENTORY.md. No hay todavía capturas, proyectos, briefs ni conocimiento reales cargados."
+  },
+  "nodes": [
+    {
+      "id": "00-inbox",
+      "nombre": "INBOX",
+      "ruta": "00-INBOX/",
+      "categoria": "captura",
+      "descripcion": "La puerta de entrada. Todo lo que capturas y aún no sabes dónde clasificar cae aquí, sin filtrar ni juzgar. No se procesa al momento de capturar — eso viene después.",
+      "archivosPrincipales": ["README.md"]
+    },
+    {
+      "id": "01-captures",
+      "nombre": "CAPTURES",
+      "ruta": "01-CAPTURES/",
+      "categoria": "captura",
+      "descripcion": "Lo que salió de INBOX ya clasificado por tipo: numbers (datos duros), observations (hechos vistos), patterns (regularidades), questions (preguntas abiertas) y reactions (reacciones/intuiciones).",
+      "archivosPrincipales": ["README.md"]
+    },
+    {
+      "id": "02-connections",
+      "nombre": "CONNECTIONS",
+      "ruta": "02-CONNECTIONS/",
+      "categoria": "conexion",
+      "descripcion": "Donde se documenta explícitamente que dos o más capturas separadas en realidad apuntan a la misma idea. No es para una captura aislada, sino para el vínculo entre varias.",
+      "archivosPrincipales": ["README.md"]
+    },
+    {
+      "id": "03-briefs",
+      "nombre": "BRIEFS",
+      "ruta": "03-BRIEFS/",
+      "categoria": "produccion",
+      "descripcion": "Capa intermedia entre 'tengo una idea conectada' y 'tengo algo publicado'. Un brief ya tiene tesis, evidencia, audiencia y siguiente paso, listo para producción.",
+      "archivosPrincipales": ["README.md"]
+    },
+    {
+      "id": "04-published",
+      "nombre": "PUBLISHED",
+      "ruta": "04-PUBLISHED/",
+      "categoria": "produccion",
+      "descripcion": "Archivo de lo que ya salió al mundo: posts, videos, decisiones tomadas, charlas dadas. Sirve para no repetirte y para poder citarte a ti mismo.",
+      "archivosPrincipales": ["README.md"]
+    },
+    {
+      "id": "05-claude",
+      "nombre": "CLAUDE",
+      "ruta": "05-CLAUDE/",
+      "categoria": "sistema",
+      "descripcion": "El cerebro del vault visto desde la IA: reglas globales, skills reutilizables (start-project, process-inbox, extract-knowledge) y contexto persistente que el asistente debe cargar antes de operar.",
+      "archivosPrincipales": ["CLAUDE.md", "README.md", "skills/start-project.md", "skills/process-inbox.md", "skills/extract-knowledge.md", "skills/_plantilla.md"]
+    },
+    {
+      "id": "06-projects",
+      "nombre": "PROJECTS",
+      "ruta": "06-PROJECTS/",
+      "categoria": "operacion",
+      "descripcion": "Una carpeta por proyecto real, con decisiones, sesiones, pendientes y recursos. El código nunca vive aquí — solo la planeación y el contexto para retomarlo meses después.",
+      "archivosPrincipales": ["README.md", "REGISTRY.md", "_ejemplo-proyecto/README.md", "_ejemplo-proyecto/decisiones.md", "_ejemplo-proyecto/pendientes.md", "_ejemplo-proyecto/recursos.md"]
+    },
+    {
+      "id": "07-knowledge",
+      "nombre": "KNOWLEDGE",
+      "ruta": "07-KNOWLEDGE/",
+      "categoria": "operacion",
+      "descripcion": "Conocimiento genérico y reusable, extraído de proyectos ya probados — nunca inventado en abstracto. Es destino, no origen: llega aquí solo después de validarse en 2-3 proyectos reales.",
+      "archivosPrincipales": ["README.md"]
+    },
+    {
+      "id": "08-skills",
+      "nombre": "SKILLS",
+      "ruta": "08-SKILLS/",
+      "categoria": "sistema",
+      "descripcion": "Catálogo de todo lo que el usuario (o su asistente) puede ejecutar: skills del vault, comandos, herramientas SaaS, frameworks dominados. Se consulta antes de proponer cómo abordar algo nuevo.",
+      "archivosPrincipales": ["README.md", "INVENTORY.md", "CANDIDATES.md"]
+    },
+    {
+      "id": "09-credentials",
+      "nombre": "CREDENTIALS",
+      "ruta": "09-CREDENTIALS/",
+      "categoria": "operacion",
+      "descripcion": "Solo referencias a credenciales (qué servicio, qué usuario, dónde vive el secreto real). Los valores reales viven en el keychain del sistema, nunca en este vault.",
+      "archivosPrincipales": ["README.md", "_plantilla.md"]
+    },
+    {
+      "id": "09-finance",
+      "nombre": "FINANCE",
+      "ruta": "09-FINANCE/",
+      "categoria": "operacion",
+      "descripcion": "Finanzas por proyecto o entidad: costos recurrentes e ingresos. Ayuda a entender cuánto cuesta operar cada proyecto y cuánto está generando.",
+      "archivosPrincipales": ["README.md"]
+    },
+    {
+      "id": "10-team",
+      "nombre": "TEAM",
+      "ruta": "10-TEAM/",
+      "categoria": "operacion",
+      "descripcion": "Todo lo relacionado con personas que colaboran: roster de quién es quién, reportes y su estado (activo, pausado, ex-equipo). Puede quedar vacía si se trabaja en solitario.",
+      "archivosPrincipales": ["README.md", "ROSTER.md", "_plantilla-reporte.md"]
+    },
+    {
+      "id": "11-identity",
+      "nombre": "IDENTITY",
+      "ruta": "11-IDENTITY/",
+      "categoria": "identidad",
+      "descripcion": "La fuente de verdad de quién eres cuando alguien (o tu asistente) necesita representarte: rol, posicionamiento, voz al escribir, frases firma.",
+      "archivosPrincipales": ["README.md", "identidad.md", "voz.md"]
+    },
+    {
+      "id": "12-daily",
+      "nombre": "DAILY",
+      "ruta": "12-DAILY/",
+      "categoria": "captura",
+      "descripcion": "Bitácora diaria, un archivo por fecha (YYYY-MM-DD.md). No es diario personal: es registro de trabajo — qué hiciste, qué decidiste, qué quedó abierto para retomar.",
+      "archivosPrincipales": ["README.md", "_plantilla.md"]
+    },
+    {
+      "id": "13-obligaciones",
+      "nombre": "OBLIGACIONES",
+      "ruta": "13-OBLIGACIONES/",
+      "categoria": "operacion",
+      "descripcion": "Pagos recurrentes y servicios contratados, uno por servicio en servicios/. Sirve para recordar renovaciones — solo referencias, nunca montos ni cuentas sensibles.",
+      "archivosPrincipales": ["README.md", "servicios/_plantilla.md"]
+    }
+  ],
+  "edges": [
+    {
+      "origen": "00-inbox",
+      "destino": "01-captures",
+      "razon": "process-inbox.md clasifica cada archivo crudo del inbox en la subcarpeta de captura que corresponda (numbers, observations, patterns, questions o reactions)."
+    },
+    {
+      "origen": "00-inbox",
+      "destino": "02-connections",
+      "razon": "process-inbox.md propone 02-CONNECTIONS como destino cuando dos archivos del inbox parecen apuntar a la misma idea, antes de moverlos sueltos a capturas separadas."
+    },
+    {
+      "origen": "00-inbox",
+      "destino": "06-projects",
+      "razon": "process-inbox.md puede identificar que una captura del inbox pertenece a un proyecto ya abierto y proponerlo como destino."
+    },
+    {
+      "origen": "01-captures",
+      "destino": "02-connections",
+      "razon": "cuando dos capturas clasificadas por separado (p. ej. dos patterns, o un pattern y un number) resultan ser la misma idea, el vínculo se documenta explícitamente aquí."
+    },
+    {
+      "origen": "02-connections",
+      "destino": "03-briefs",
+      "razon": "según el flujo descrito en la raíz de CLAUDE.md: cuando una conexión merece volverse pieza de contenido o decisión formal, se convierte en brief."
+    },
+    {
+      "origen": "03-briefs",
+      "destino": "04-published",
+      "razon": "un brief con tesis, evidencia, audiencia y siguiente paso definido pasa a producción y, al salir al mundo, se archiva como publicado."
+    },
+    {
+      "origen": "08-skills",
+      "destino": "06-projects",
+      "razon": "start-project.md exige leer 08-SKILLS/INVENTORY.md antes de crear un proyecto nuevo, para proponer qué skills existentes aplican."
+    },
+    {
+      "origen": "07-knowledge",
+      "destino": "06-projects",
+      "razon": "start-project.md exige revisar 07-KNOWLEDGE/ antes de crear un proyecto nuevo, para reutilizar conocimiento ya extraído en vez de partir de cero."
+    },
+    {
+      "origen": "06-projects",
+      "destino": "07-knowledge",
+      "razon": "extract-knowledge.md sube lo genérico y reusable de un proyecto cerrado a 07-KNOWLEDGE/, dejando rastro de qué se extrajo en el README del proyecto y en REGISTRY.md."
+    },
+    {
+      "origen": "05-claude",
+      "destino": "00-inbox",
+      "razon": "el skill process-inbox.md, definido dentro de 05-CLAUDE/skills/, es el que opera directamente sobre el contenido de 00-INBOX cuando se invoca."
+    },
+    {
+      "origen": "05-claude",
+      "destino": "06-projects",
+      "razon": "el skill start-project.md, definido dentro de 05-CLAUDE/skills/, es el que se ejecuta al arrancar un proyecto nuevo en 06-PROJECTS/."
+    },
+    {
+      "origen": "05-claude",
+      "destino": "07-knowledge",
+      "razon": "el skill extract-knowledge.md, definido dentro de 05-CLAUDE/skills/, es el que mueve aprendizajes de un proyecto cerrado hacia 07-KNOWLEDGE/."
+    },
+    {
+      "origen": "11-identity",
+      "destino": "03-briefs",
+      "razon": "la voz y el posicionamiento definidos en 11-IDENTITY/voz.md e identidad.md son la fuente de verdad para redactar briefs y contenido en nombre del usuario."
+    },
+    {
+      "origen": "13-obligaciones",
+      "destino": "09-finance",
+      "razon": "la raíz de CLAUDE.md agrupa ambas carpetas para preguntas de pagos o servicios: obligaciones registra compromisos recurrentes y finance registra el costo real asociado."
+    },
+    {
+      "origen": "06-projects",
+      "destino": "09-finance",
+      "razon": "09-FINANCE/README.md indica que las finanzas se llevan por proyecto, referenciando el trabajo documentado en 06-PROJECTS/."
+    },
+    {
+      "origen": "06-projects",
+      "destino": "10-team",
+      "razon": "10-TEAM/ registra quién colabora y en qué modalidad, información que se cruza con los proyectos activos documentados en 06-PROJECTS/."
+    },
+    {
+      "origen": "12-daily",
+      "destino": "06-projects",
+      "razon": "12-DAILY/README.md describe la bitácora como registro de trabajo — qué se hizo, decidió y quedó pendiente — típicamente sobre los proyectos activos en 06-PROJECTS/."
+    }
+  ],
+  "onboarding": [
+    {
+      "paso": 1,
+      "titulo": "¿Qué es un cerebro digital?",
+      "descripcion": "Es una estructura de carpetas en markdown plano que sirve como memoria entre proyectos, contexto para tu IA y bitácora personal. No es una app: son archivos .md que abres con cualquier editor. Lo importante no es la herramienta, es que te permita encontrar tu propio conocimiento meses después.",
+      "carpetasDestacadas": []
+    },
+    {
+      "paso": 2,
+      "titulo": "El flujo de captura: de la idea cruda a lo publicado",
+      "descripcion": "Todo empieza en INBOX (00) sin clasificar. Se ordena por tipo en CAPTURES (01). Cuando dos capturas apuntan a lo mismo, el vínculo se documenta en CONNECTIONS (02). Cuando algo madura lo suficiente, se convierte en BRIEFS (03) con tesis y audiencia. Y cuando sale al mundo, se archiva en PUBLISHED (04) para no repetirte.",
+      "carpetasDestacadas": ["00-inbox", "01-captures", "02-connections", "03-briefs", "04-published"]
+    },
+    {
+      "paso": 3,
+      "titulo": "El motor: IA, proyectos, conocimiento y skills",
+      "descripcion": "CLAUDE (05) guarda las reglas y skills que tu asistente usa para operar sobre el vault. Cada proyecto real vive en PROJECTS (06), consultando antes SKILLS (08) para reutilizar workflows y KNOWLEDGE (07) para no repetir aprendizajes ya validados. Al cerrar un proyecto, lo genérico sube a KNOWLEDGE — así el ciclo se retroalimenta.",
+      "carpetasDestacadas": ["05-claude", "06-projects", "07-knowledge", "08-skills"]
+    },
+    {
+      "paso": 4,
+      "titulo": "Las carpetas de soporte operativo",
+      "descripcion": "IDENTITY (11) define quién eres y cómo escribes. DAILY (12) es tu bitácora de trabajo día a día. CREDENTIALS (09), FINANCE (09) y OBLIGACIONES (13) llevan solo referencias — nunca secretos ni montos sensibles directamente. TEAM (10) registra con quién colaboras si no trabajas solo.",
+      "carpetasDestacadas": ["11-identity", "12-daily", "09-credentials", "09-finance", "13-obligaciones", "10-team"]
+    },
+    {
+      "paso": 5,
+      "titulo": "Cómo explorar este visor",
+      "descripcion": "Usa el grafo para ver de un vistazo cómo se conectan las carpetas: cada flecha tiene una razón documentada, no es decorativa. Haz clic en un nodo para saltar a su tarjeta, o usa el buscador y los filtros por categoría para encontrar algo específico sin perderte.",
+      "carpetasDestacadas": []
+    }
+  ]
+};
+</script>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------- Estado global ----------
+  var vaultData = null;
+  var network = null;
+  var nodesDataSet = null;
+  var edgesDataSet = null;
+  var activeCategories = new Set();
+  var edgesByFolder = {}; // id -> { in: [...], out: [...] }
+  var obSteps = [];
+  var obIndex = 0;
+
+  var CATEGORY_META = {
+    captura:    { label: 'Captura',    color: '#f59e0b', text: 'text-amber-400',  bg: 'bg-amber-500/10',  border: 'border-amber-500/30' },
+    conexion:   { label: 'Conexión',   color: '#06b6d4', text: 'text-cyan-400',   bg: 'bg-cyan-500/10',   border: 'border-cyan-500/30' },
+    produccion: { label: 'Producción', color: '#8b5cf6', text: 'text-violet-400', bg: 'bg-violet-500/10', border: 'border-violet-500/30' },
+    operacion:  { label: 'Operación',  color: '#14b8a6', text: 'text-teal-400',   bg: 'bg-teal-500/10',   border: 'border-teal-500/30' },
+    identidad:  { label: 'Identidad',  color: '#ec4899', text: 'text-pink-400',   bg: 'bg-pink-500/10',   border: 'border-pink-500/30' },
+    sistema:    { label: 'Sistema',    color: '#64748b', text: 'text-slate-400',  bg: 'bg-slate-500/10',  border: 'border-slate-500/30' }
+  };
+  var CATEGORY_ORDER = ['captura', 'conexion', 'produccion', 'operacion', 'identidad', 'sistema'];
+
+  // ---------- Helpers ----------
+  function esc(str) {
+    var div = document.createElement('div');
+    div.textContent = str == null ? '' : String(str);
+    return div.innerHTML;
+  }
+
+  function numberFromId(id) {
+    var m = id.match(/^(\d{2})/);
+    return m ? m[1] : '—';
+  }
+
+  function catMeta(cat) {
+    return CATEGORY_META[cat] || CATEGORY_META.sistema;
+  }
+
+  function nodeById(id) {
+    return vaultData.nodes.find(function (n) { return n.id === id; });
+  }
+
+  function truncate(str, n) {
+    if (!str) return '';
+    return str.length > n ? str.slice(0, n).trim() + '…' : str;
+  }
+
+  // ---------- Datos embebidos (sin fetch, funciona con doble clic / file://) ----------
+  try {
+    vaultData = VAULT_DATA;
+    init();
+  } catch (err) {
+    document.getElementById('error-message').textContent = (err && err.message) || String(err);
+    var errState = document.getElementById('error-state');
+    errState.classList.remove('hidden');
+    errState.classList.add('flex');
+    if (window.lucide) lucide.createIcons();
+  }
+
+  // ---------- Init ----------
+  function init() {
+    buildConnectionIndex();
+    renderHeaderStats();
+    renderAuditBanner();
+    renderLegend();
+    renderCategoryFilters();
+    renderGrid();
+    renderGraph();
+    wireToolbar();
+    wireModals();
+    wireKeyboard();
+
+    var app = document.getElementById('app');
+    app.classList.remove('hidden');
+
+    if (window.lucide) lucide.createIcons();
+
+    obSteps = (vaultData.onboarding || []).slice().sort(function (a, b) { return a.paso - b.paso; });
+    if (!localStorage.getItem('cerebro-onboarding-seen') && obSteps.length) {
+      showOnboarding(0);
+    }
+  }
+
+  function buildConnectionIndex() {
+    vaultData.nodes.forEach(function (n) { edgesByFolder[n.id] = { in: [], out: [] }; });
+    (vaultData.edges || []).forEach(function (e) {
+      if (edgesByFolder[e.origen]) edgesByFolder[e.origen].out.push(e);
+      if (edgesByFolder[e.destino]) edgesByFolder[e.destino].in.push(e);
+    });
+  }
+
+  // ---------- Header ----------
+  function renderHeaderStats() {
+    var s = vaultData.stats || {};
+    document.getElementById('stat-folders').textContent = s.totalFolders != null ? s.totalFolders : vaultData.nodes.length;
+    document.getElementById('stat-mdfiles').textContent = s.totalMdFilesInFolders != null ? s.totalMdFilesInFolders : '—';
+    document.getElementById('stat-date').textContent = s.generatedAt || '—';
+    document.getElementById('footer-date').textContent = s.generatedAt || '—';
+  }
+
+  function renderAuditBanner() {
+    var s = vaultData.stats || {};
+    var banner = document.getElementById('audit-banner');
+    if (!s.auditNote) { banner.remove(); return; }
+    document.getElementById('audit-note-text').textContent = s.auditNote;
+    document.getElementById('btn-dismiss-audit').addEventListener('click', function () {
+      banner.remove();
+    });
+  }
+
+  function renderLegend() {
+    var legend = document.getElementById('legend');
+    legend.innerHTML = CATEGORY_ORDER.map(function (cat) {
+      var m = catMeta(cat);
+      return '<span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full inline-block" style="background:' + m.color + '"></span>' + esc(m.label) + '</span>';
+    }).join('');
+  }
+
+  // ---------- Filtros ----------
+  function renderCategoryFilters() {
+    var wrap = document.getElementById('category-filters');
+    var presentCats = CATEGORY_ORDER.filter(function (cat) {
+      return vaultData.nodes.some(function (n) { return n.categoria === cat; });
+    });
+    wrap.innerHTML = presentCats.map(function (cat) {
+      var m = catMeta(cat);
+      return '<button data-cat="' + cat + '" class="cat-chip text-xs font-medium px-2.5 py-1.5 rounded-lg border transition-colors ' + m.bg + ' ' + m.text + ' ' + m.border + '">' + esc(m.label) + '</button>';
+    }).join('');
+
+    Array.prototype.forEach.call(wrap.querySelectorAll('.cat-chip'), function (btn) {
+      btn.classList.add('chip-active');
+      btn.addEventListener('click', function () {
+        var cat = btn.getAttribute('data-cat');
+        if (activeCategories.has(cat)) {
+          activeCategories.delete(cat);
+          btn.classList.remove('chip-active');
+          btn.style.opacity = '0.4';
+        } else {
+          activeCategories.add(cat);
+          btn.classList.add('chip-active');
+          btn.style.opacity = '1';
+        }
+        applyFilters();
+      });
+    });
+    // por defecto: todas activas
+    activeCategories = new Set(presentCats);
+  }
+
+  function wireToolbar() {
+    var input = document.getElementById('search-input');
+    var clearBtn = document.getElementById('btn-clear-search');
+    input.addEventListener('input', function () {
+      clearBtn.classList.toggle('hidden', input.value.length === 0);
+      applyFilters();
+    });
+    clearBtn.addEventListener('click', function () {
+      input.value = '';
+      clearBtn.classList.add('hidden');
+      applyFilters();
+      input.focus();
+    });
+  }
+
+  function applyFilters() {
+    var q = document.getElementById('search-input').value.trim().toLowerCase();
+    var visibleCount = 0;
+
+    vaultData.nodes.forEach(function (node) {
+      var haystack = [node.nombre, node.descripcion, node.ruta].concat(node.archivosPrincipales || []).join(' ').toLowerCase();
+      var matchesText = !q || haystack.indexOf(q) !== -1;
+      var matchesCat = activeCategories.has(node.categoria);
+      var visible = matchesText && matchesCat;
+
+      var card = document.getElementById('card-' + node.id);
+      if (card) card.classList.toggle('hidden', !visible);
+
+      if (nodesDataSet) nodesDataSet.update({ id: node.id, hidden: !visible });
+
+      if (visible) visibleCount++;
+    });
+
+    var noResults = document.getElementById('no-results');
+    var grid = document.getElementById('grid');
+    if (visibleCount === 0) {
+      noResults.classList.remove('hidden');
+      noResults.classList.add('flex');
+      grid.classList.add('hidden');
+    } else {
+      noResults.classList.add('hidden');
+      noResults.classList.remove('flex');
+      grid.classList.remove('hidden');
+    }
+  }
+
+  // ---------- Grid de tarjetas ----------
+  function renderGrid() {
+    var grid = document.getElementById('grid');
+    grid.innerHTML = vaultData.nodes.map(cardTemplate).join('');
+
+    Array.prototype.forEach.call(grid.querySelectorAll('[data-open-detail]'), function (el) {
+      el.addEventListener('click', function (evt) {
+        if (evt.target.closest('[data-jump]')) return; // los chips de conexión manejan su propio click
+        openDetailModal(el.getAttribute('data-open-detail'));
+        focusGraphNode(el.getAttribute('data-open-detail'));
+      });
+    });
+
+    Array.prototype.forEach.call(grid.querySelectorAll('[data-jump]'), function (el) {
+      el.addEventListener('click', function (evt) {
+        evt.stopPropagation();
+        var id = el.getAttribute('data-jump');
+        openDetailModal(id);
+        focusGraphNode(id);
+      });
+    });
+  }
+
+  function cardTemplate(node) {
+    var m = catMeta(node.categoria);
+    var conns = edgesByFolder[node.id] || { in: [], out: [] };
+    var files = (node.archivosPrincipales || []).slice(0, 4);
+    var extra = (node.archivosPrincipales || []).length - files.length;
+
+    var emptySubs = (vaultData.stats && vaultData.stats.emptySubfoldersPaths || []).filter(function (p) {
+      return p.indexOf(node.ruta.replace(/\/$/, '')) === 0;
+    });
+
+    var filesHtml = files.map(function (f) {
+      return '<span class="text-[11px] bg-neutral-800/70 text-neutral-400 rounded px-1.5 py-0.5">' + esc(f) + '</span>';
+    }).join('');
+    if (extra > 0) filesHtml += '<span class="text-[11px] text-neutral-600 px-1">+' + extra + ' más</span>';
+
+    var outChips = conns.out.slice(0, 3).map(function (e) {
+      return '<button data-jump="' + esc(e.destino) + '" class="text-[11px] flex items-center gap-0.5 bg-neutral-800/60 hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 rounded px-1.5 py-0.5 transition-colors">→ ' + esc(e.destino) + '</button>';
+    }).join('');
+    var inChips = conns.in.slice(0, 3).map(function (e) {
+      return '<button data-jump="' + esc(e.origen) + '" class="text-[11px] flex items-center gap-0.5 bg-neutral-800/60 hover:bg-neutral-700 text-neutral-400 hover:text-neutral-200 rounded px-1.5 py-0.5 transition-colors">← ' + esc(e.origen) + '</button>';
+    }).join('');
+
+    var warnHtml = emptySubs.length
+      ? '<div class="flex items-center gap-1 text-[11px] text-amber-500/80 mt-2"><i data-lucide="alert-triangle" class="w-3 h-3"></i>' + emptySubs.length + ' subcarpeta(s) vacía(s)</div>'
+      : '';
+
+    return (
+      '<article id="card-' + node.id + '" data-open-detail="' + esc(node.id) + '" tabindex="0" ' +
+      'class="group cursor-pointer bg-neutral-900 hover:bg-neutral-900/80 border border-neutral-800 hover:border-neutral-700 rounded-xl p-4 transition-colors focus:outline-none focus:ring-1 focus:ring-violet-500/40">' +
+        '<div class="flex items-start justify-between gap-2 mb-2">' +
+          '<div class="flex items-center gap-2 min-w-0">' +
+            '<span class="text-[11px] font-mono text-neutral-500 bg-neutral-800 rounded px-1.5 py-0.5 shrink-0">' + numberFromId(node.id) + '</span>' +
+            '<h3 class="text-sm font-semibold text-neutral-100 truncate">' + esc(node.nombre) + '</h3>' +
+          '</div>' +
+          '<span class="text-[10px] font-medium ' + m.text + ' ' + m.bg + ' border ' + m.border + ' rounded-full px-2 py-0.5 shrink-0">' + esc(m.label) + '</span>' +
+        '</div>' +
+        '<p class="text-xs text-neutral-400 leading-relaxed mb-3">' + esc(truncate(node.descripcion, 160)) + '</p>' +
+        '<div class="flex flex-wrap gap-1 mb-2">' + filesHtml + '</div>' +
+        (outChips || inChips ? '<div class="flex flex-wrap gap-1 pt-2 mt-2 border-t border-neutral-800/80">' + outChips + inChips + '</div>' : '') +
+        warnHtml +
+      '</article>'
+    );
+  }
+
+  // ---------- Grafo (Vis.js) ----------
+  function renderGraph() {
+    var degree = {};
+    vaultData.nodes.forEach(function (n) { degree[n.id] = 0; });
+    (vaultData.edges || []).forEach(function (e) {
+      if (degree[e.origen] != null) degree[e.origen]++;
+      if (degree[e.destino] != null) degree[e.destino]++;
+    });
+
+    var nodeItems = vaultData.nodes.map(function (n) {
+      var m = catMeta(n.categoria);
+      return {
+        id: n.id,
+        label: numberFromId(n.id) + ' · ' + n.nombre,
+        value: (degree[n.id] || 1),
+        title: n.nombre + ' — ' + truncate(n.descripcion, 140),
+        color: {
+          background: m.color,
+          border: '#e5e5e5',
+          highlight: { background: m.color, border: '#ffffff' },
+          hover: { background: m.color, border: '#ffffff' }
+        },
+        font: { color: '#e5e5e5', size: 12, face: 'Inter, sans-serif', strokeWidth: 3, strokeColor: '#0a0a0a' }
+      };
+    });
+
+    var edgeItems = (vaultData.edges || []).map(function (e, i) {
+      return {
+        id: 'e' + i,
+        from: e.origen,
+        to: e.destino,
+        title: e.razon,
+        arrows: 'to'
+      };
+    });
+
+    nodesDataSet = new vis.DataSet(nodeItems);
+    edgesDataSet = new vis.DataSet(edgeItems);
+
+    var container = document.getElementById('graph');
+    var data = { nodes: nodesDataSet, edges: edgesDataSet };
+    var options = {
+      nodes: {
+        shape: 'dot',
+        scaling: { min: 14, max: 28 },
+        borderWidth: 2,
+        shadow: false
+      },
+      edges: {
+        color: { color: 'rgba(255,255,255,0.15)', highlight: '#8b5cf6', hover: 'rgba(255,255,255,0.4)' },
+        width: 1.25,
+        hoverWidth: 1.5,
+        selectionWidth: 1.5,
+        smooth: { type: 'continuous', roundness: 0.4 },
+        arrows: { to: { enabled: true, scaleFactor: 0.5 } }
+      },
+      physics: {
+        barnesHut: { gravitationalConstant: -2800, springLength: 150, springConstant: 0.045, damping: 0.28, avoidOverlap: 0.7 },
+        stabilization: { iterations: 250 }
+      },
+      interaction: {
+        hover: true,
+        dragNodes: true,
+        dragView: true,
+        zoomView: true,
+        tooltipDelay: 150,
+        navigationButtons: false
+      },
+      layout: { improvedLayout: true }
+    };
+
+    network = new vis.Network(container, data, options);
+
+    network.once('stabilizationIterationsDone', function () {
+      network.setOptions({ physics: { enabled: false } });
+    });
+
+    network.on('click', function (params) {
+      if (params.nodes && params.nodes.length) {
+        var id = params.nodes[0];
+        openDetailModal(id);
+        scrollCardIntoView(id);
+      }
+    });
+
+    network.on('dragStart', function (params) {
+      if (params.nodes && params.nodes.length) network.setOptions({ physics: { enabled: true } });
+    });
+    network.on('dragEnd', function () {
+      network.setOptions({ physics: { enabled: false } });
+    });
+  }
+
+  function focusGraphNode(id) {
+    if (!network) return;
+    network.selectNodes([id]);
+    network.focus(id, { scale: 1.15, animation: { duration: 450, easingFunction: 'easeInOutQuad' } });
+  }
+
+  function scrollCardIntoView(id) {
+    var card = document.getElementById('card-' + id);
+    if (!card) return;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.add('ring-2', 'ring-violet-500/60', 'ring-pulse');
+    setTimeout(function () { card.classList.remove('ring-2', 'ring-violet-500/60', 'ring-pulse'); }, 2400);
+  }
+
+  function setGraphHighlight(ids) {
+    if (!nodesDataSet) return;
+    var idSet = new Set(ids || []);
+    vaultData.nodes.forEach(function (n) {
+      nodesDataSet.update({ id: n.id, opacity: idSet.size === 0 ? 1 : (idSet.has(n.id) ? 1 : 0.15) });
+    });
+  }
+
+  // ---------- Modal de detalle ----------
+  function openDetailModal(id) {
+    var node = nodeById(id);
+    if (!node) return;
+    var m = catMeta(node.categoria);
+    var conns = edgesByFolder[id] || { in: [], out: [] };
+
+    var filesHtml = (node.archivosPrincipales || []).map(function (f) {
+      return '<li class="flex items-center gap-1.5 text-xs text-neutral-400"><i data-lucide="file-text" class="w-3 h-3 text-neutral-600"></i>' + esc(f) + '</li>';
+    }).join('');
+
+    var outHtml = conns.out.map(function (e) {
+      return '<li class="text-xs text-neutral-400 border-l-2 border-neutral-800 pl-2.5 py-0.5">' +
+        '<button data-jump-modal="' + esc(e.destino) + '" class="text-neutral-200 hover:text-violet-400 font-medium">→ ' + esc(e.destino) + '</button>' +
+        '<p class="text-neutral-500 mt-0.5 leading-relaxed">' + esc(e.razon) + '</p></li>';
+    }).join('') || '<li class="text-xs text-neutral-600">Sin conexiones salientes registradas.</li>';
+
+    var inHtml = conns.in.map(function (e) {
+      return '<li class="text-xs text-neutral-400 border-l-2 border-neutral-800 pl-2.5 py-0.5">' +
+        '<button data-jump-modal="' + esc(e.origen) + '" class="text-neutral-200 hover:text-violet-400 font-medium">← ' + esc(e.origen) + '</button>' +
+        '<p class="text-neutral-500 mt-0.5 leading-relaxed">' + esc(e.razon) + '</p></li>';
+    }).join('') || '<li class="text-xs text-neutral-600">Sin conexiones entrantes registradas.</li>';
+
+    var content = document.getElementById('detail-content');
+    content.innerHTML =
+      '<div class="flex items-start justify-between gap-3 mb-4">' +
+        '<div class="flex items-center gap-2.5">' +
+          '<span class="text-xs font-mono text-neutral-500 bg-neutral-800 rounded px-2 py-1">' + numberFromId(node.id) + '</span>' +
+          '<div>' +
+            '<h2 class="text-lg font-semibold text-neutral-100 leading-tight">' + esc(node.nombre) + '</h2>' +
+            '<p class="text-xs text-neutral-500 font-mono mt-0.5">' + esc(node.ruta) + '</p>' +
+          '</div>' +
+        '</div>' +
+        '<button data-close="detail" class="text-neutral-500 hover:text-neutral-200 shrink-0" aria-label="Cerrar"><i data-lucide="x" class="w-5 h-5"></i></button>' +
+      '</div>' +
+      '<span class="inline-block text-[11px] font-medium ' + m.text + ' ' + m.bg + ' border ' + m.border + ' rounded-full px-2.5 py-0.5 mb-4">' + esc(m.label) + '</span>' +
+      '<p class="text-sm text-neutral-300 leading-relaxed mb-5">' + esc(node.descripcion) + '</p>' +
+      '<div class="mb-5">' +
+        '<h3 class="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 mb-2">Archivos destacados</h3>' +
+        '<ul class="space-y-1">' + filesHtml + '</ul>' +
+      '</div>' +
+      '<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
+        '<div>' +
+          '<h3 class="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 mb-2">Conexiones salientes</h3>' +
+          '<ul class="space-y-2">' + outHtml + '</ul>' +
+        '</div>' +
+        '<div>' +
+          '<h3 class="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 mb-2">Conexiones entrantes</h3>' +
+          '<ul class="space-y-2">' + inHtml + '</ul>' +
+        '</div>' +
+      '</div>';
+
+    Array.prototype.forEach.call(content.querySelectorAll('[data-jump-modal]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var targetId = btn.getAttribute('data-jump-modal');
+        openDetailModal(targetId);
+        focusGraphNode(targetId);
+      });
+    });
+    content.querySelector('[data-close="detail"]').addEventListener('click', function () { closeModal('detail'); });
+
+    if (window.lucide) lucide.createIcons();
+    showModal('detail-modal');
+  }
+
+  // ---------- Modales genéricos ----------
+  function showModal(elId) {
+    var el = document.getElementById(elId);
+    el.classList.remove('hidden');
+    el.classList.add('flex');
+  }
+  function hideModal(elId) {
+    var el = document.getElementById(elId);
+    el.classList.add('hidden');
+    el.classList.remove('flex');
+  }
+  function closeModal(which) {
+    if (which === 'detail') hideModal('detail-modal');
+    if (which === 'onboarding') {
+      hideModal('onboarding-modal');
+      setGraphHighlight([]);
+      localStorage.setItem('cerebro-onboarding-seen', 'true');
+    }
+  }
+
+  function wireModals() {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-close]'), function (el) {
+      el.addEventListener('click', function () { closeModal(el.getAttribute('data-close')); });
+    });
+    document.getElementById('btn-open-onboarding').addEventListener('click', function () { showOnboarding(0); });
+    document.getElementById('btn-skip-onboarding').addEventListener('click', function () { closeModal('onboarding'); });
+    document.getElementById('btn-ob-prev').addEventListener('click', function () { renderOnboardingStep(obIndex - 1); });
+    document.getElementById('btn-ob-next').addEventListener('click', function () {
+      if (obIndex >= obSteps.length - 1) { closeModal('onboarding'); return; }
+      renderOnboardingStep(obIndex + 1);
+    });
+  }
+
+  function wireKeyboard() {
+    document.addEventListener('keydown', function (evt) {
+      var tag = (evt.target && evt.target.tagName) || '';
+      var typing = tag === 'INPUT' || tag === 'TEXTAREA';
+
+      if (evt.key === '/' && !typing) {
+        evt.preventDefault();
+        document.getElementById('search-input').focus();
+      }
+      if (evt.key === 'Escape') {
+        if (!document.getElementById('detail-modal').classList.contains('hidden')) closeModal('detail');
+        else if (!document.getElementById('onboarding-modal').classList.contains('hidden')) closeModal('onboarding');
+      }
+    });
+  }
+
+  // ---------- Onboarding Wizard ----------
+  function showOnboarding(index) {
+    if (!obSteps.length) return;
+    showModal('onboarding-modal');
+    renderOnboardingStep(index);
+  }
+
+  function renderOnboardingStep(index) {
+    if (index < 0 || index >= obSteps.length) return;
+    obIndex = index;
+    var step = obSteps[index];
+
+    document.getElementById('ob-title').textContent = step.titulo || '';
+    document.getElementById('ob-description').textContent = step.descripcion || '';
+
+    var foldersWrap = document.getElementById('ob-folders');
+    var destacadas = step.carpetasDestacadas || [];
+    foldersWrap.innerHTML = destacadas.map(function (id) {
+      var n = nodeById(id);
+      if (!n) return '';
+      var m = catMeta(n.categoria);
+      return '<span class="text-[11px] font-medium ' + m.text + ' ' + m.bg + ' border ' + m.border + ' rounded-full px-2 py-0.5">' + numberFromId(id) + ' · ' + esc(n.nombre) + '</span>';
+    }).join('');
+
+    var dots = document.getElementById('ob-dots');
+    dots.innerHTML = obSteps.map(function (s, i) {
+      return '<span class="w-1.5 h-1.5 rounded-full ' + (i === index ? 'bg-violet-500' : 'bg-neutral-700') + '"></span>';
+    }).join('');
+
+    document.getElementById('btn-ob-prev').disabled = index === 0;
+    document.getElementById('ob-next-label').textContent = index === obSteps.length - 1 ? 'Entendido, explorar' : 'Siguiente';
+
+    setGraphHighlight(destacadas);
+    if (window.lucide) lucide.createIcons();
+  }
+
+})();
+</script>
+</body>
+</html>
